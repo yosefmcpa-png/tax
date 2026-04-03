@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&display=swap');
+
+:root {
+  --primary-bg:      #1e1b4b;
+  --secondary-bg:    rgba(30, 41, 59, 0.6);
+  --modal-bg:        rgba(15, 23, 42, 0.97);
+  --primary-text:    #e2e8f0;
+  --secondary-text:  #94a3b8;
+  --accent:          #2dd4bf;
+  --accent-hover:    #5eead4;
+  --link-color:      #a5f3fc;
+  --error-color:     #fb7185;
+  --highlight:       #e879f9;
+}
+
+html { height: 100%; }
+
+body {
+  font-family: 'Assistant', sans-serif;
+  background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+  color: var(--primary-text);
+  min-height: 100%;
+  direction: rtl;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 5px; }
+
+/* Prose (Markdown rendered content) */
+.prose         { color: var(--primary-text); font-size: 1rem; line-height: 1.7; }
+.prose h2      { font-size: 1.3rem; font-weight: 700; border-bottom: 1px solid var(--accent); padding-bottom: .4rem; margin: 1.5rem 0 .8rem; color: var(--accent); }
+.prose h3      { font-size: 1.1rem; font-weight: 600; color: var(--link-color); margin: 1.2rem 0 .5rem; }
+.prose strong  { color: var(--highlight); font-weight: 600; }
+.prose a       { color: var(--link-color); text-decoration: underline; transition: color .2s; }
+.prose a:hover { color: var(--accent-hover); }
+.prose ol,
+.prose ul      { padding-right: 1.5rem; margin-top: .5rem; }
+.prose table   { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.prose th,
+.prose td      { border: 1px solid #334155; padding: .5rem .75rem; text-align: right; }
+.prose th      { background: rgba(45,212,191,.1); font-weight: 600; }
+.prose code    { background: rgba(100,116,139,.2); padding: .1em .3em; border-radius: 4px; font-size: .9em; }
+.prose pre     { background: rgba(15,23,42,.8); padding: 1em; border-radius: .5rem; overflow-x: auto; border: 1px solid rgba(45,212,191,.2); }
+.prose blockquote { border-right: 3px solid var(--accent); padding-right: 1rem; color: var(--secondary-text); font-style: italic; margin: 1rem 0; }
+
+.citation {
+  font-size: .75em; font-weight: bold; color: var(--accent);
+  cursor: pointer; vertical-align: super; margin-right: 2px;
+  border: 1px solid rgba(45,212,191,.3); background: rgba(45,212,191,.1);
+  padding: 0 3px; border-radius: 3px; text-decoration: none;
+  transition: background .2s;
+}
+.citation:hover { background: rgba(45,212,191,.3); }
+
+/* Animations */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulseGreen {
+  0%, 100% { transform: scale(1); opacity: .8; }
+  50%       { transform: scale(1.15); opacity: 1; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.animate-fade-slide-in { animation: fadeSlideIn .45s ease forwards; }
+.animate-pulse-green   { animation: pulseGreen 1.5s infinite ease-in-out; }
