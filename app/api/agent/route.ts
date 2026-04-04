@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient, createAdminSupabaseClient } from '@/lib/supabase/server'
-import { callGemini } from '@/lib/gemini/client'
-import { ACTION_PROMPTS } from '@/lib/gemini/prompts'
-import { processDocument } from '@/lib/gemini/chunker'
+import { runClaudeAgent } from '@/lib/claude/agent'
+import { ACTION_PROMPTS } from '@/lib/claude/prompts'
+import { processDocument } from '@/lib/claude/chunker'
 import { logAgentAction } from '@/lib/agent/logger'
 import { agentRatelimit } from '@/lib/agent/ratelimit'
 import { ALLOWED_ACTIONS, type AgentRequest, type AgentResponse } from '@/types'
 
 // ============================================================
 // POST /api/agent — נקודת הכניסה המרכזית לסוכן ה-AI
-// כל הקריאות ל-Gemini עוברות דרך כאן — API Key מוגן
+// Claude opus-4-6 עם tool use לחיפוש DB מקומי
 // ============================================================
 
 export async function POST(req: NextRequest) {
@@ -50,38 +50,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'סוג פעולה לא מורשה' }, { status: 400 })
     }
 
-    // ── 4. Authorization — בדיקת בעלות על התיק ──────────────
+    // ── 4. Authorization ─────────────────────────────────────
     const adminClient = createAdminSupabaseClient()
 
     if (reqCaseId) {
-      const { data: caseData, error: caseError } = await adminClient
-        .from('cases')
-        .select('id')
-        .eq('id', reqCaseId)
-        .eq('user_id', userId)
-        .single()
-
-      if (caseError || !caseData) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-      }
+      const { data: caseData } = await adminClient
+        .from('cases').select('id')
+        .eq('id', reqCaseId).eq('user_id', userId).single()
+      if (!caseData) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       caseId = reqCaseId
     } else {
-      // יצירת תיק חדש אוטומטית
-      const title = query.substring(0, 80).trim() || 'תיק חדש'
-      const { data: newCase, error: createError } = await adminClient
+      const { data: newCase } = await adminClient
         .from('cases')
         .insert({
           user_id:   userId,
-          title,
+          title:     query.substring(0, 80).trim() || 'תיק חדש',
           status:    'open',
           case_type: actionType === 'analyze' ? 'document' : actionType === 'simulation' ? 'simulation' : 'research',
         })
-        .select('id')
-        .single()
-
-      if (createError || !newCase) {
-        throw new Error('שגיאה ביצירת תיק חדש')
-      }
+        .select('id').single()
+      if (!newCase) throw new Error('שגיאה ביצירת תיק חדש')
       caseId = newCase.id
     }
 
@@ -90,43 +78,39 @@ export async function POST(req: NextRequest) {
     let chunkCount = 1
 
     if (actionType === 'analyze' && query.split(/\s+/).length > 5000) {
-      const { processedText, chunkCount: chunks } = await processDocument(query)
-      processedQuery = processedText
-      chunkCount = chunks
-      console.log(`[Agent] Document processed: ${chunks} chunks`)
+      const result = await processDocument(query)
+      processedQuery = result.processedText
+      chunkCount = result.chunkCount
     }
 
     // ── 6. Build Prompt ──────────────────────────────────────
     const promptConfig = ACTION_PROMPTS[actionType]
-    const userMessage = promptConfig.buildUserMessage(processedQuery, query)
+    const userMessage  = promptConfig.buildUserMessage(processedQuery, query)
 
-    // המרת היסטוריה לפורמט Gemini
-    const geminiHistory = history.map(msg => ({
-      role: msg.role,
-      parts: [{ text: msg.content }],
+    // המרת היסטוריה לפורמט Claude
+    const claudeHistory = history.map(msg => ({
+      role:    msg.role === 'model' ? 'assistant' as const : 'user' as const,
+      content: msg.content,
     }))
 
-    // ── 7. Call Gemini API ───────────────────────────────────
-    const { text, sources, inputTokens, outputTokens } = await callGemini({
+    // ── 7. Call Claude Agent (עם tool use לDB) ───────────────
+    const { text, sources, inputTokens, outputTokens } = await runClaudeAgent({
       systemInstruction: promptConfig.system,
       userMessage,
-      history: actionType === 'followup' ? geminiHistory : [],
-      grounded: promptConfig.grounded,
-      jsonMode: promptConfig.jsonMode,
+      history:     actionType === 'followup' ? claudeHistory : [],
+      useThinking: promptConfig.useThinking,
     })
 
     // ── 8. Save to DB ────────────────────────────────────────
     await Promise.all([
-      // שמור הודעת משתמש
       adminClient.from('conversations').insert({
         case_id:     caseId,
         role:        'user',
-        content:     query.substring(0, 10000), // לא שומרים PDFs מלאים
+        content:     query.substring(0, 10000),
         sources:     [],
         action_type: actionType,
         token_count: inputTokens,
       }),
-      // שמור תגובת הסוכן
       adminClient.from('conversations').insert({
         case_id:     caseId,
         role:        'model',
@@ -135,32 +119,18 @@ export async function POST(req: NextRequest) {
         action_type: actionType,
         token_count: outputTokens,
       }),
-      // עדכן updated_at בתיק
       adminClient.from('cases').update({ updated_at: new Date().toISOString() }).eq('id', caseId),
     ])
 
     // ── 9. Audit Log ─────────────────────────────────────────
-    await logAgentAction({
-      userId,
-      caseId,
-      actionType,
-      inputTokens,
-      outputTokens,
-      success: true,
-      ipAddress: ip,
-    })
+    await logAgentAction({ userId, caseId, actionType, inputTokens, outputTokens, success: true, ipAddress: ip })
 
     const response: AgentResponse = {
-      text,
+      text: chunkCount > 1 ? `> 📄 *המסמך עובד ב-${chunkCount} חלקים.*\n\n${text}` : text,
       sources,
       caseId,
-      conversationId: '',   // מוחזר לצד הלקוח לאחר שמירה
+      conversationId: '',
       tokenCount: inputTokens + outputTokens,
-    }
-
-    // הוסף מידע על chunking אם רלוונטי
-    if (chunkCount > 1) {
-      response.text = `> 📄 *המסמך עובד ב-${chunkCount} חלקים בשל גודלו.*\n\n${text}`
     }
 
     return NextResponse.json(response)
@@ -168,22 +138,7 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const error = err as Error
     console.error('[Agent API] Error:', error.message)
-
-    // Audit log לשגיאה
-    if (userId) {
-      await logAgentAction({
-        userId,
-        caseId: caseId || undefined,
-        actionType: 'unknown',
-        success: false,
-        errorMessage: error.message,
-        ipAddress: ip,
-      })
-    }
-
-    return NextResponse.json(
-      { error: error.message || 'שגיאת שרת פנימית' },
-      { status: 500 }
-    )
+    if (userId) await logAgentAction({ userId, caseId: caseId || undefined, actionType: 'unknown', success: false, errorMessage: error.message, ipAddress: ip })
+    return NextResponse.json({ error: error.message || 'שגיאת שרת פנימית' }, { status: 500 })
   }
 }

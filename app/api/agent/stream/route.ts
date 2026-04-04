@@ -1,15 +1,15 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminSupabaseClient } from '@/lib/supabase/server'
-import { callGeminiStream } from '@/lib/gemini/client'
-import { ACTION_PROMPTS } from '@/lib/gemini/prompts'
-import { processDocument } from '@/lib/gemini/chunker'
+import { runClaudeAgentStream } from '@/lib/claude/agent'
+import { ACTION_PROMPTS } from '@/lib/claude/prompts'
+import { processDocument } from '@/lib/claude/chunker'
 import { logAgentAction } from '@/lib/agent/logger'
 import { agentRatelimit } from '@/lib/agent/ratelimit'
 import { ALLOWED_ACTIONS, type AgentRequest, type Source } from '@/types'
 
 // ============================================================
 // POST /api/agent/stream — Streaming SSE endpoint
-// מחזיר Server-Sent Events: תוכן מגיע בזמן אמת תוך כדי כתיבה
+// Claude opus-4-6 עם adaptive thinking + tool use לDB
 // ============================================================
 
 const enc = new TextEncoder()
@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
   let userId = ''
   let caseId = ''
 
-  // ── ReadableStream — הלב של SSE ──────────────────────────
   const stream = new ReadableStream({
     async start(controller) {
       const send = (data: object) => {
@@ -34,34 +33,22 @@ export async function POST(req: NextRequest) {
         // ── 1. Auth ────────────────────────────────────────
         const supabase = await createServerSupabaseClient()
         const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError || !user) {
-          send({ error: 'Unauthorized', done: true })
-          controller.close()
-          return
-        }
+        if (authError || !user) { send({ error: 'Unauthorized', done: true }); controller.close(); return }
         userId = user.id
 
         // ── 2. Rate Limit ──────────────────────────────────
         const { success } = await agentRatelimit.limit(userId)
-        if (!success) {
-          send({ error: 'יותר מדי בקשות. נסה שוב בעוד דקה.', done: true })
-          controller.close()
-          return
-        }
+        if (!success) { send({ error: 'יותר מדי בקשות. נסה שוב בעוד דקה.', done: true }); controller.close(); return }
 
         // ── 3. Validate Input ──────────────────────────────
         const body: AgentRequest = await req.json()
         const { query, actionType, caseId: reqCaseId, history = [] } = body
 
         if (!query || typeof query !== 'string' || query.length > 60000) {
-          send({ error: 'שאילתה לא תקינה', done: true })
-          controller.close()
-          return
+          send({ error: 'שאילתה לא תקינה', done: true }); controller.close(); return
         }
         if (!ALLOWED_ACTIONS.includes(actionType)) {
-          send({ error: 'סוג פעולה לא מורשה', done: true })
-          controller.close()
-          return
+          send({ error: 'סוג פעולה לא מורשה', done: true }); controller.close(); return
         }
 
         // ── 4. Authorization ───────────────────────────────
@@ -69,13 +56,8 @@ export async function POST(req: NextRequest) {
 
         if (reqCaseId) {
           const { data: caseData } = await adminClient
-            .from('cases').select('id')
-            .eq('id', reqCaseId).eq('user_id', userId).single()
-          if (!caseData) {
-            send({ error: 'Forbidden', done: true })
-            controller.close()
-            return
-          }
+            .from('cases').select('id').eq('id', reqCaseId).eq('user_id', userId).single()
+          if (!caseData) { send({ error: 'Forbidden', done: true }); controller.close(); return }
           caseId = reqCaseId
         } else {
           const { data: newCase } = await adminClient
@@ -89,11 +71,10 @@ export async function POST(req: NextRequest) {
             .select('id').single()
           if (!newCase) { send({ error: 'שגיאה ביצירת תיק', done: true }); controller.close(); return }
           caseId = newCase.id
-          // שלח את ה-caseId לצד הלקוח מיד
           send({ caseId })
         }
 
-        // ── 5. Chunking למסמכים ארוכים ────────────────────
+        // ── 5. Chunking ────────────────────────────────────
         let processedQuery = query
         if (actionType === 'analyze' && query.split(/\s+/).length > 5000) {
           send({ status: 'מפצל מסמך גדול לחלקים...' })
@@ -105,44 +86,40 @@ export async function POST(req: NextRequest) {
         // ── 6. Build Prompt ────────────────────────────────
         const promptConfig = ACTION_PROMPTS[actionType]
         const userMessage  = promptConfig.buildUserMessage(processedQuery, query)
-        const geminiHistory = history.map(m => ({
-          role: m.role,
-          parts: [{ text: m.content }],
+
+        const claudeHistory = history.map(msg => ({
+          role:    msg.role === 'model' ? 'assistant' as const : 'user' as const,
+          content: msg.content,
         }))
 
-        // ── 7. Stream from Gemini ──────────────────────────
-        let fullText   = ''
-        let sources:    Source[] = []
+        // ── 7. Stream from Claude Agent ────────────────────
+        let fullText     = ''
+        let sources:      Source[] = []
         let inputTokens  = 0
         let outputTokens = 0
 
         send({ status: 'מקבל תגובה...' })
 
-        for await (const chunk of callGeminiStream({
+        for await (const chunk of runClaudeAgentStream({
           systemInstruction: promptConfig.system,
           userMessage,
-          history: actionType === 'followup' ? geminiHistory : [],
-          grounded: promptConfig.grounded && !promptConfig.jsonMode,
+          history:     actionType === 'followup' ? claudeHistory : [],
+          useThinking: promptConfig.useThinking,
         })) {
-          if (chunk.error) {
-            send({ error: chunk.error, done: true })
-            controller.close()
-            return
-          }
-
           if (chunk.text) {
             fullText += chunk.text
-            send({ text: chunk.text })   // כל fragment נשלח מיד
+            send({ text: chunk.text })
           }
-
+          if (chunk.toolCall) {
+            send({ status: chunk.toolCall })
+          }
           if (chunk.done) {
-            sources      = chunk.sources      ?? []
             inputTokens  = chunk.inputTokens  ?? 0
             outputTokens = chunk.outputTokens ?? 0
           }
         }
 
-        // ── 8. Save to DB (async, after stream) ───────────
+        // ── 8. Save to DB ──────────────────────────────────
         await Promise.all([
           adminClient.from('conversations').insert({
             case_id: caseId, role: 'user',
@@ -154,35 +131,21 @@ export async function POST(req: NextRequest) {
             content: fullText, sources,
             action_type: actionType, token_count: outputTokens,
           }),
-          adminClient.from('cases')
-            .update({ updated_at: new Date().toISOString() }).eq('id', caseId),
+          adminClient.from('cases').update({ updated_at: new Date().toISOString() }).eq('id', caseId),
         ])
 
         // ── 9. Audit Log ───────────────────────────────────
-        await logAgentAction({
-          userId, caseId, actionType,
-          inputTokens, outputTokens,
-          success: true, ipAddress: ip,
-        })
+        await logAgentAction({ userId, caseId, actionType, inputTokens, outputTokens, success: true, ipAddress: ip })
 
-        // ── 10. Final event with metadata ─────────────────
+        // ── 10. Final event ────────────────────────────────
         send({ done: true, sources, caseId, inputTokens, outputTokens })
         controller.close()
 
       } catch (err: unknown) {
         const error = err as Error
         console.error('[Stream API] Error:', error.message)
-        if (userId) {
-          await logAgentAction({
-            userId, caseId: caseId || undefined,
-            actionType: 'unknown', success: false,
-            errorMessage: error.message, ipAddress: ip,
-          })
-        }
-        try {
-          controller.enqueue(sseEvent({ error: error.message || 'שגיאת שרת', done: true }))
-          controller.close()
-        } catch { /* already closed */ }
+        if (userId) await logAgentAction({ userId, caseId: caseId || undefined, actionType: 'unknown', success: false, errorMessage: error.message, ipAddress: ip })
+        try { controller.enqueue(sseEvent({ error: error.message || 'שגיאת שרת', done: true })); controller.close() } catch { /* already closed */ }
       }
     },
   })
@@ -192,7 +155,7 @@ export async function POST(req: NextRequest) {
       'Content-Type':                'text/event-stream',
       'Cache-Control':               'no-cache, no-transform',
       'Connection':                  'keep-alive',
-      'X-Accel-Buffering':           'no',   // מונע buffering ב-nginx
+      'X-Accel-Buffering':           'no',
       'Access-Control-Allow-Origin': process.env.NEXT_PUBLIC_APP_URL ?? '*',
     },
   })

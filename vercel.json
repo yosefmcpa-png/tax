@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync?scraper=companies",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync?scraper=legislation",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/sync?scraper=court_cases",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/sync?scraper=all",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}

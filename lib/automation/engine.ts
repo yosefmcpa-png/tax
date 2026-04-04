@@ -1,5 +1,5 @@
-import { callGemini } from '@/lib/gemini/client'
-import { ACTION_PROMPTS } from '@/lib/gemini/prompts'
+import { callClaude } from '@/lib/claude/client'
+import { ACTION_PROMPTS } from '@/lib/claude/prompts'
 import { logAgentAction } from '@/lib/agent/logger'
 import {
   Workflow, WorkflowRun, WorkflowStepResult,
@@ -8,6 +8,7 @@ import {
 
 // ============================================================
 // Automation Engine — מריץ Workflow צעד אחר צעד
+// Claude opus-4-6 עם adaptive thinking
 // ============================================================
 
 export type StepUpdateCallback = (run: WorkflowRun) => void
@@ -35,14 +36,13 @@ export async function executeWorkflow(
 
   onUpdate?.(run)
 
-  let context = inputText   // output של כל שלב הופך context לשלב הבא
+  let context = inputText
   let currentStepId = workflow.steps[0]?.id
 
   while (currentStepId) {
     const step = workflow.steps.find(s => s.id === currentStepId)
     if (!step) break
 
-    // עדכן שלב ל-running
     updateStep(run, step.id, { status: 'running', startedAt: new Date().toISOString() })
     onUpdate?.(run)
 
@@ -53,13 +53,14 @@ export async function executeWorkflow(
 
         case 'ai_action': {
           const cfg = step.config as AiActionConfig
-          const promptCfg = ACTION_PROMPTS[cfg.actionType]
+          const promptCfg    = ACTION_PROMPTS[cfg.actionType]
           const queryContext = cfg.useContext ? context : inputText
 
-          const { text, sources, inputTokens, outputTokens } = await callGemini({
+          const { text, inputTokens, outputTokens } = await callClaude({
             systemInstruction: promptCfg.system,
             userMessage:       promptCfg.buildUserMessage(queryContext),
-            grounded:          promptCfg.grounded,
+            useWebSearch:      false,
+            useThinking:       promptCfg.useThinking,
           })
 
           await logAgentAction({
@@ -69,21 +70,12 @@ export async function executeWorkflow(
             success: true,
           })
 
-          // ב-sources — הוסף לסוף הטקסט
-          if (sources.length > 0) {
-            const srcList = sources
-              .map((s, i) => `${i + 1}. [${s.title}](${s.uri})`)
-              .join('\n')
-            output = `${text}\n\n---\n**מקורות:**\n${srcList}`
-          } else {
-            output = text
-          }
+          output = text
           break
         }
 
         case 'condition': {
-          // בשלב זה: condition פשוט על ה-context
-          output = context   // עובר כמות שהוא, ה-routing ייעשה ב-onSuccess/onError
+          output = context
           break
         }
 
@@ -94,52 +86,41 @@ export async function executeWorkflow(
         }
 
         case 'export': {
-          output = context   // הטקסט המצטבר הוא ה-export
+          output = context
           break
         }
       }
 
-      context = output   // output הופך context לשלב הבא
-      updateStep(run, step.id, {
-        status:   'success',
-        output,
-        endedAt:  new Date().toISOString(),
-      })
+      context = output
+      updateStep(run, step.id, { status: 'success', output, endedAt: new Date().toISOString() })
       onUpdate?.(run)
 
       currentStepId = step.onSuccess ?? null
 
     } catch (err: unknown) {
       const error = err as Error
-      updateStep(run, step.id, {
-        status:  'error',
-        error:   error.message,
-        endedAt: new Date().toISOString(),
-      })
+      updateStep(run, step.id, { status: 'error', error: error.message, endedAt: new Date().toISOString() })
 
       await logAgentAction({
         userId, caseId,
-        actionType:   `workflow:error`,
+        actionType:   'workflow:error',
         success:      false,
         errorMessage: error.message,
       })
 
       onUpdate?.(run)
       currentStepId = step.onError ?? null
-
-      // אם אין error handler — עצור
       if (!step.onError) break
     }
   }
 
-  // Mark remaining steps as skipped
   run.steps
     .filter(s => s.status === 'pending')
     .forEach(s => { s.status = 'skipped' })
 
   const hasError = run.steps.some(s => s.status === 'error')
-  run.status   = hasError ? 'error' : 'success'
-  run.endedAt  = new Date().toISOString()
+  run.status  = hasError ? 'error' : 'success'
+  run.endedAt = new Date().toISOString()
 
   onUpdate?.(run)
   return run
