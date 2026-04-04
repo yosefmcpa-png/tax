@@ -31,6 +31,36 @@ export async function GET() {
   }
 }
 
+// POST /api/cases — יצירת תיק ידנית (נדרש לאוטומציה)
+export async function POST(req: NextRequest) {
+  try {
+    const supabase = await createServerSupabaseClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { title, caseType } = await req.json()
+    if (!title) return NextResponse.json({ error: 'חסר שם תיק' }, { status: 400 })
+
+    const adminClient = createAdminSupabaseClient()
+    const { data: newCase, error } = await adminClient
+      .from('cases')
+      .insert({
+        user_id:   user.id,
+        title:     title.substring(0, 120),
+        status:    'open',
+        case_type: caseType ?? 'research',
+      })
+      .select('id, title, status, case_type, created_at, updated_at')
+      .single()
+
+    if (error) throw error
+    return NextResponse.json(newCase)
+  } catch (err: unknown) {
+    const error = err as Error
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
 // DELETE /api/cases?id=xxx — מחיקת תיק
 export async function DELETE(req: NextRequest) {
   try {

@@ -118,6 +118,74 @@ export async function callGemini(params: {
   return { text, sources, inputTokens, outputTokens }
 }
 
+// ---- Streaming — מחזיר AsyncGenerator לשימוש ב-SSE ----
+export interface StreamChunk {
+  text?: string
+  sources?: Source[]
+  inputTokens?: number
+  outputTokens?: number
+  error?: string
+  done?: boolean
+}
+
+export async function* callGeminiStream(params: {
+  systemInstruction: string
+  userMessage: string
+  history?: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>
+  grounded?: boolean
+}): AsyncGenerator<StreamChunk> {
+  const { systemInstruction, userMessage, history = [], grounded = false } = params
+
+  const model = genAI.getGenerativeModel({
+    model: TEXT_MODEL,
+    systemInstruction,
+    safetySettings: SAFETY_SETTINGS,
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.8,
+      maxOutputTokens: 8192,
+    },
+  })
+
+  const tools = grounded ? [{ googleSearch: {} } as never] : undefined
+
+  const request: GenerateContentRequest = {
+    contents: [
+      ...history,
+      { role: 'user', parts: [{ text: userMessage }] },
+    ],
+    ...(tools ? { tools } : {}),
+  }
+
+  const result = await model.generateContentStream(request)
+
+  // Stream text chunks as they arrive
+  for await (const chunk of result.stream) {
+    const text = chunk.text()
+    if (text) yield { text }
+  }
+
+  // Final metadata after stream completes
+  const response = await result.response
+  const inputTokens  = response.usageMetadata?.promptTokenCount ?? 0
+  const outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0
+
+  const sources: Source[] = []
+  const groundingMeta = response.candidates?.[0]?.groundingMetadata
+  if (grounded && groundingMeta) {
+    const chunks = (groundingMeta as unknown as {
+      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>
+    }).groundingChunks ?? []
+    chunks.forEach(chunk => {
+      if (chunk.web?.uri && chunk.web?.title) {
+        sources.push({ uri: chunk.web.uri, title: chunk.web.title })
+      }
+    })
+  }
+
+  yield { done: true, sources, inputTokens, outputTokens }
+}
+
 // ---- TTS ----
 export async function callGeminiTTS(text: string): Promise<{
   audioData: string
