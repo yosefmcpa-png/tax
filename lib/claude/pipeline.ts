@@ -174,7 +174,7 @@ async function runAgent(
       messages,
       thinking:   { type: 'adaptive' },
       ...(useTools ? { tools: PIPELINE_TOOLS } : {}),
-    } as Anthropic.MessageCreateParamsNonStreaming)
+    } as unknown as Anthropic.MessageCreateParamsNonStreaming)
 
     for (const b of response.content) {
       if (b.type === 'text') finalText = b.text

@@ -37,7 +37,7 @@ export async function executeWorkflow(
   onUpdate?.(run)
 
   let context = inputText
-  let currentStepId = workflow.steps[0]?.id
+  let currentStepId: string | null | undefined = workflow.steps[0]?.id
 
   while (currentStepId) {
     const step = workflow.steps.find(s => s.id === currentStepId)

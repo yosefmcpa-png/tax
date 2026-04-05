@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
 
     const chatHistory = (history ?? [])
       .reverse()
-      .slice(0, -1) // הסר את ההודעה הנוכחית
-      .map(h => ({
+      .slice(0, -1)
+      .map((h: { direction: string; message: string }) => ({
         role:    h.direction === 'inbound' ? 'user' as const : 'assistant' as const,
         content: h.message,
       }))
