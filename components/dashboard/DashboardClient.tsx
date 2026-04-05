@@ -2,7 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import AutomationPanel from './AutomationPanel'
+
+const PipelineRunner = dynamic(() => import('@/components/pipeline/PipelineRunner'), { ssr: false })
 
 interface Stats {
   totalCases:    number
@@ -42,7 +45,7 @@ const TYPE_ICON: Record<string, string> = {
 }
 
 export default function DashboardClient({ stats, userId }: { stats: Stats; userId: string }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'automation' | 'logs'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'pipeline' | 'automation' | 'logs'>('overview')
 
   const topActions = Object.entries(stats.actionCounts)
     .sort(([, a], [, b]) => b - a)
@@ -79,17 +82,17 @@ export default function DashboardClient({ stats, userId }: { stats: Stats; userI
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-slate-700/50">
-        {(['overview', 'automation', 'logs'] as const).map(tab => (
+      <div className="flex gap-1 mb-5 border-b border-slate-700/50 overflow-x-auto">
+        {(['overview', 'pipeline', 'automation', 'logs'] as const).map(tab => (
           <button key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition border-b-2 -mb-px ${
+            className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition border-b-2 -mb-px whitespace-nowrap ${
               activeTab === tab
                 ? 'border-teal-400 text-teal-300'
                 : 'border-transparent text-slate-500 hover:text-slate-300'
             }`}
           >
-            {{ overview: 'סקירה', automation: '⚙️ אוטומציות', logs: 'לוג פעולות' }[tab]}
+            {{ overview: 'סקירה', pipeline: '🤖 Pipeline', automation: '⚙️ תהליכים', logs: 'לוג פעולות' }[tab]}
           </button>
         ))}
       </div>
@@ -152,6 +155,11 @@ export default function DashboardClient({ stats, userId }: { stats: Stats; userI
             </div>
           </div>
         </div>
+      )}
+
+      {/* Pipeline Tab — 4 AI agents */}
+      {activeTab === 'pipeline' && (
+        <PipelineRunner />
       )}
 
       {/* Automation Tab */}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useCaseStore, ACTION_LOADING_TEXT } from '@/store/caseStore'
 import { ActionType, AgentRequest, Source, ConversationMessage } from '@/types'
 import MessageBubble from './MessageBubble'
@@ -16,14 +16,14 @@ export default function ChatInterface() {
     modalContent, setModalContent,
   } = useCaseStore()
 
-  const scrollRef     = useRef<HTMLDivElement>(null)
-  const abortRef      = useRef<AbortController | null>(null)
+  const scrollRef  = useRef<HTMLDivElement>(null)
+  const abortRef   = useRef<AbortController | null>(null)
+  const [toolStatus, setToolStatus] = useState<string>('')
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+  }, [messages, toolStatus])
 
-  // ── Streaming SSE call ──────────────────────────────────
   const callAgentStream = useCallback(async (
     query: string,
     actionType: ActionType,
@@ -35,20 +35,18 @@ export default function ChatInterface() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
 
-    // Cancel any previous in-flight request
     abortRef.current?.abort()
     abortRef.current = new AbortController()
-
     setIsLoading(true)
+    setToolStatus('')
 
     if (!renderInModal) {
       addMessage({ role: 'user', content: query })
     }
 
-    // Placeholder — will be filled character by character
     const placeholderId = addMessage({
-      role: 'model',
-      content: ACTION_LOADING_TEXT[actionType] ?? 'מעבד...',
+      role:      'model',
+      content:   ACTION_LOADING_TEXT[actionType] ?? 'מעבד...',
       isLoading: true,
     })
 
@@ -60,31 +58,29 @@ export default function ChatInterface() {
     const body: AgentRequest = {
       query,
       actionType,
-      caseId: activeCaseId ?? undefined,
+      caseId:  activeCaseId ?? undefined,
       history: actionType === 'followup' ? history : [],
     }
 
     try {
       const res = await fetch('/api/agent/stream', {
-        method: 'POST',
+        method:  'POST',
         headers: {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify(body),
+        body:   JSON.stringify(body),
         signal: abortRef.current.signal,
       })
 
-      if (!res.ok || !res.body) {
-        throw new Error(`שגיאת שרת: ${res.status}`)
-      }
+      if (!res.ok || !res.body) throw new Error(`שגיאת שרת: ${res.status}`)
 
-      const reader  = res.body.getReader()
-      const decoder = new TextDecoder()
-      let   buffer  = ''
+      const reader   = res.body.getReader()
+      const decoder  = new TextDecoder()
+      let   buffer   = ''
       let   fullText = ''
       let   sources: Source[] = []
-      let   started = false     // האם קיבלנו את הטקסט הראשון
+      let   started  = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -92,7 +88,7 @@ export default function ChatInterface() {
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''   // השאר fragment חלקי לסיבוב הבא
+        buffer = lines.pop() ?? ''
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
@@ -102,78 +98,58 @@ export default function ChatInterface() {
           let event: Record<string, unknown>
           try { event = JSON.parse(raw) } catch { continue }
 
-          // שגיאה
           if (event.error) {
-            updateMessage(placeholderId, {
-              content: `שגיאה: ${event.error}`,
-              isLoading: false,
-              error: true,
-            })
+            setToolStatus('')
+            updateMessage(placeholderId, { content: `שגיאה: ${event.error}`, isLoading: false, error: true })
             setIsLoading(false)
             return
           }
 
-          // caseId חדש שנוצר
           if (event.caseId && !activeCaseId) {
             setActiveCaseId(event.caseId as string)
           }
 
-          // סטטוס ביניים (chunking וכד')
+          // הודעת סטטוס (chunking, tool calls)
           if (event.status && !event.text) {
-            updateMessage(placeholderId, {
-              content: event.status as string,
-              isLoading: true,
-            })
+            setToolStatus(event.status as string)
+            updateMessage(placeholderId, { content: event.status as string, isLoading: true })
             continue
           }
 
-          // טקסט חדש — live streaming
-          if (event.text) {
-            if (!started) {
-              // הסר מצב loading בפעם הראשונה שמגיע טקסט
-              started = true
-            }
-            fullText += event.text as string
-            updateMessage(placeholderId, {
-              content:   fullText,
-              isLoading: false,   // מציג טקסט חי, לא spinner
-            })
+          // כלי פעיל (web_search, fetch_page וכד')
+          if (event.toolCall) {
+            setToolStatus(event.toolCall as string)
+            continue
           }
 
-          // סיום — metadata מגיע
+          // טקסט חי
+          if (event.text) {
+            if (!started) { started = true; setToolStatus('') }
+            fullText += event.text as string
+            updateMessage(placeholderId, { content: fullText, isLoading: false })
+          }
+
           if (event.done) {
             sources = (event.sources as Source[]) ?? []
-            const finalText = fullText || ''
-
+            setToolStatus('')
             if (renderInModal) {
               updateMessage(placeholderId, { content: '', isLoading: false })
-              setModalContent({
-                text:    finalText,
-                sources: sources,
-                title:   getModalTitle(actionType),
-              })
+              setModalContent({ text: fullText, sources, title: getModalTitle(actionType) })
             } else {
-              updateMessage(placeholderId, {
-                content:   finalText,
-                sources:   sources,
-                isLoading: false,
-              })
+              updateMessage(placeholderId, { content: fullText, sources, isLoading: false })
             }
             setIsLoading(false)
           }
         }
       }
-
     } catch (err: unknown) {
       if ((err as { name?: string }).name === 'AbortError') return
       const error = err as Error
-      updateMessage(placeholderId, {
-        content:   `שגיאה: ${error.message}`,
-        isLoading: false,
-        error:     true,
-      })
+      setToolStatus('')
+      updateMessage(placeholderId, { content: `שגיאה: ${error.message}`, isLoading: false, error: true })
     } finally {
       setIsLoading(false)
+      setToolStatus('')
     }
   }, [isLoading, messages, activeCaseId, addMessage, updateMessage,
       setIsLoading, setActiveCaseId, setModalContent])
@@ -189,56 +165,54 @@ export default function ChatInterface() {
   return (
     <div className="relative flex flex-col h-full">
 
-      {/* Messages scroll area */}
+      {/* Messages */}
       <div
         ref={scrollRef}
         className="flex-grow overflow-y-auto px-4 pt-4 pb-2"
         style={{
-          maskImage:          'linear-gradient(to top, black 92%, transparent 100%)',
-          WebkitMaskImage:    'linear-gradient(to top, black 92%, transparent 100%)',
+          maskImage:       'linear-gradient(to top, black 92%, transparent 100%)',
+          WebkitMaskImage: 'linear-gradient(to top, black 92%, transparent 100%)',
         }}
       >
-        {messages.length === 0 && (
-          <WelcomeScreen onAnalyze={handleDocumentAnalyze} />
-        )}
+        {messages.length === 0 && <WelcomeScreen onAnalyze={handleDocumentAnalyze} />}
         {messages.filter(m => m.content).map(msg => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
       </div>
 
-      {/* Contextual actions */}
-      {showActions && (
-        <div className="px-4 pb-2 flex flex-wrap gap-2 justify-center">
-          <ContextBtn
-            label="פתח דוח מלא"
-            color="teal"
-            onClick={() => setModalContent({
-              text:    lastModelMsg!.content,
-              sources: lastModelMsg!.sources ?? [],
-              title:   'דוח מלא',
-            })}
-          />
-          <ContextBtn
-            label="התחל סימולציה"
-            color="indigo"
-            onClick={() => callAgentStream(lastModelMsg!.content, 'simulation')}
-          />
-          <ContextBtn
-            label="תיק חדש"
-            color="slate"
-            onClick={clearMessages}
-          />
+      {/* Tool activity bar */}
+      {toolStatus && (
+        <div className="mx-4 mb-1 px-3 py-1.5 rounded-lg bg-teal-900/20 border border-teal-500/20
+                        flex items-center gap-2 text-xs text-teal-400/80 animate-pulse">
+          <span className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-ping" />
+          {toolStatus}
         </div>
       )}
 
-      {/* Stop button while streaming */}
+      {/* Contextual actions */}
+      {showActions && (
+        <div className="px-4 pb-2 flex flex-wrap gap-2 justify-center">
+          {[
+            { label: '📊 פתח דוח מלא',    color: 'teal'   as const, action: () => setModalContent({ text: lastModelMsg!.content, sources: lastModelMsg!.sources ?? [], title: 'דוח מלא' }) },
+            { label: '⚖️ השוואה לפסיקה',  color: 'indigo' as const, action: () => callAgentStream(lastModelMsg!.content, 'compare', true) },
+            { label: '⚠️ הערכת סיכונים',  color: 'amber'  as const, action: () => callAgentStream(lastModelMsg!.content, 'risk', true) },
+            { label: '🎭 סימולציה',        color: 'purple' as const, action: () => callAgentStream(lastModelMsg!.content, 'simulation') },
+            { label: '🗒 תיק חדש',         color: 'slate'  as const, action: clearMessages },
+          ].map(b => (
+            <ContextBtn key={b.label} label={b.label} color={b.color} onClick={b.action} />
+          ))}
+        </div>
+      )}
+
+      {/* Stop button */}
       {isLoading && (
         <div className="px-4 pb-1 flex justify-center">
           <button
-            onClick={() => { abortRef.current?.abort(); setIsLoading(false) }}
-            className="text-xs px-3 py-1 rounded-full border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 transition"
+            onClick={() => { abortRef.current?.abort(); setIsLoading(false); setToolStatus('') }}
+            className="text-xs px-3 py-1 rounded-full border border-rose-500/40
+                       text-rose-400 hover:bg-rose-500/10 transition"
           >
-            עצור ⏹
+            ⏹ עצור
           </button>
         </div>
       )}
@@ -248,7 +222,7 @@ export default function ChatInterface() {
         <InputBar
           onSubmit={(q, type) => callAgentStream(q, type)}
           disabled={isLoading}
-          placeholder={messages.length > 0 ? 'שאל שאלת המשך...' : 'הזן סוגיית מס למחקר...'}
+          placeholder={messages.length > 0 ? 'שאל שאלת המשך...' : 'הזן סוגיית מס — הסוכן יחפש ברשת ויביא מקורות...'}
         />
       </div>
 
@@ -259,16 +233,14 @@ export default function ChatInterface() {
           text={modalContent.text}
           sources={modalContent.sources}
           onClose={() => setModalContent(null)}
-          onAction={(actionType) =>
-            callAgentStream(modalContent.text, actionType, true)
-          }
+          onAction={(actionType) => callAgentStream(modalContent.text, actionType, true)}
         />
       )}
     </div>
   )
 }
 
-// ── Welcome screen ─────────────────────────────────────────
+// ── Welcome Screen ─────────────────────────────────────────
 function WelcomeScreen({ onAnalyze }: { onAnalyze: (t: string) => void }) {
   const { setIsLoading } = useCaseStore()
 
@@ -296,7 +268,7 @@ function WelcomeScreen({ onAnalyze }: { onAnalyze: (t: string) => void }) {
         for (let i = 1; i <= pdf.numPages; i++) {
           const pg = await pdf.getPage(i)
           const ct = await pg.getTextContent()
-          text += `--- עמוד ${i} ---\n${ct.items.map(x => x.str).join(' ')}\n\n`
+          text += `--- עמוד ${i} ---\n${ct.items.map((x: { str: string }) => x.str).join(' ')}\n\n`
         }
       } else {
         text = await file.text()
@@ -317,26 +289,29 @@ function WelcomeScreen({ onAnalyze }: { onAnalyze: (t: string) => void }) {
             style={{ textShadow: '0 0 24px rgba(45,212,191,0.4)' }}>
           Tax Solver Agent
         </h2>
-        <p className="text-slate-400 text-sm">שאל סוגיית מס, העלה מסמך, או הפעל תהליך אוטומטי</p>
+        <p className="text-slate-400 text-sm">
+          מחקר מס אוטונומי — הסוכן מחפש ברשת ומביא מקורות לבד
+        </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl w-full px-4">
-        <HintCard icon="🔍" title="מחקר מס" desc='שאל "מה הכללים לניכוי הוצאות רכב?"' />
-        <HintCard icon="📄" title="ניתוח מסמך" desc="העלה שומה, צו, או מכתב מהרשות" />
-        <HintCard icon="⚙️" title="אוטומציה" desc='פתח Dashboard → הרץ תהליך אוטומטי' />
+        <HintCard icon="🌐" title="חיפוש אוטונומי" desc='שאל ושאל — הסוכן ימצא את המידע לבד' />
+        <HintCard icon="📄" title="ניתוח מסמך"     desc="העלה שומה, צו, או מכתב מהרשות" />
+        <HintCard icon="🤖" title="Pipeline מלא"    desc='Dashboard → הרץ 4 סוכנים במקביל' />
       </div>
 
       <label className="cursor-pointer group mt-2">
         <input type="file" accept=".pdf,.txt" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-        <div className="flex items-center gap-3 px-6 py-3 rounded-xl border-2 border-dashed border-teal-500/30
-                        group-hover:border-teal-500/60 group-hover:bg-teal-500/5 transition-all">
+        <div className="flex items-center gap-3 px-6 py-3 rounded-xl border-2 border-dashed
+                        border-teal-500/30 group-hover:border-teal-500/60 group-hover:bg-teal-500/5
+                        transition-all">
           <svg className="h-5 w-5 text-teal-400/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
               d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
           </svg>
           <span className="text-sm text-teal-400/80 group-hover:text-teal-300 transition font-medium">
-            העלה מסמך PDF / TXT לניתוח
+            העלה מסמך PDF / TXT לניתוח אוטומטי
           </span>
         </div>
       </label>
@@ -346,7 +321,8 @@ function WelcomeScreen({ onAnalyze }: { onAnalyze: (t: string) => void }) {
 
 function HintCard({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
-    <div className="rounded-xl border border-slate-700/50 p-4 text-right bg-slate-800/20 hover:bg-slate-800/40 transition">
+    <div className="rounded-xl border border-slate-700/50 p-4 text-right bg-slate-800/20
+                    hover:bg-slate-800/40 transition">
       <div className="text-2xl mb-2">{icon}</div>
       <div className="text-sm font-semibold text-slate-200 mb-1">{title}</div>
       <div className="text-xs text-slate-500">{desc}</div>
@@ -356,11 +332,13 @@ function HintCard({ icon, title, desc }: { icon: string; title: string; desc: st
 
 function ContextBtn({
   label, color, onClick,
-}: { label: string; color: 'teal' | 'indigo' | 'slate'; onClick: () => void }) {
+}: { label: string; color: 'teal' | 'indigo' | 'amber' | 'purple' | 'slate'; onClick: () => void }) {
   const cls = {
-    teal:   'border-teal-500/40 text-teal-400 hover:bg-teal-500/10',
+    teal:   'border-teal-500/40   text-teal-400   hover:bg-teal-500/10',
     indigo: 'border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10',
-    slate:  'border-slate-600 text-slate-400 hover:bg-slate-700/30',
+    amber:  'border-amber-500/40  text-amber-400  hover:bg-amber-500/10',
+    purple: 'border-purple-500/40 text-purple-400 hover:bg-purple-500/10',
+    slate:  'border-slate-600     text-slate-400  hover:bg-slate-700/30',
   }[color]
   return (
     <button onClick={onClick}

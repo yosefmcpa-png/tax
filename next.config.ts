@@ -3,21 +3,9 @@ import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: '10mb', // לטיפול ב-PDFs
+      bodySizeLimit: '10mb',
     },
   },
-  // מניעת חשיפת משתני סביבה לצד הלקוח
-  serverRuntimeConfig: {
-    geminiApiKey: process.env.GEMINI_API_KEY,
-    supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY,
-    upstashRedisUrl: process.env.UPSTASH_REDIS_REST_URL,
-    upstashRedisToken: process.env.UPSTASH_REDIS_REST_TOKEN,
-  },
-  publicRuntimeConfig: {
-    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  },
-  // Headers אבטחה
   async headers() {
     return [
       {
@@ -42,7 +30,6 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // API routes — CORS מוגבל
         source: '/api/(.*)',
         headers: [
           { key: 'Access-Control-Allow-Origin', value: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' },
