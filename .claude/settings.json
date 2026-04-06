@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/user/tax && npx tsc --noEmit 2>&1 | head -20",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -E '\\.(ts|tsx)$' | { read -r f; [ -n \"$f\" ] && cd /home/user/tax && npx tsc --noEmit 2>&1 | head -20 || true; } 2>/dev/null || true",
             "timeout": 30,
             "statusMessage": "בודק TypeScript..."
           }
