@@ -96,6 +96,18 @@ export default function Sidebar() {
           </svg>
           צ׳אט
         </Link>
+        <Link href="/search"
+          className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition ${
+            pathname === '/search'
+              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+              : 'text-slate-400 hover:bg-slate-700/30 hover:text-slate-200 border border-transparent'
+          }`}>
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          חיפוש מאגר
+        </Link>
         <Link href="/dashboard"
           className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition ${
             pathname === '/dashboard'

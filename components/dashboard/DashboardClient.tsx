@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import AutomationPanel from './AutomationPanel'
 
 const PipelineRunner = dynamic(() => import('@/components/pipeline/PipelineRunner'), { ssr: false })
+const ScraperStatus  = dynamic(() => import('./ScraperStatus'), { ssr: false })
 
 interface Stats {
   totalCases:    number
@@ -45,7 +46,7 @@ const TYPE_ICON: Record<string, string> = {
 }
 
 export default function DashboardClient({ stats, userId }: { stats: Stats; userId: string }) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'pipeline' | 'automation' | 'logs'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'pipeline' | 'automation' | 'db' | 'logs'>('overview')
 
   const topActions = Object.entries(stats.actionCounts)
     .sort(([, a], [, b]) => b - a)
@@ -83,7 +84,7 @@ export default function DashboardClient({ stats, userId }: { stats: Stats; userI
 
       {/* Tabs */}
       <div className="flex gap-1 mb-5 border-b border-slate-700/50 overflow-x-auto">
-        {(['overview', 'pipeline', 'automation', 'logs'] as const).map(tab => (
+        {(['overview', 'pipeline', 'automation', 'db', 'logs'] as const).map(tab => (
           <button key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition border-b-2 -mb-px whitespace-nowrap ${
@@ -92,7 +93,7 @@ export default function DashboardClient({ stats, userId }: { stats: Stats; userI
                 : 'border-transparent text-slate-500 hover:text-slate-300'
             }`}
           >
-            {{ overview: 'סקירה', pipeline: '🤖 Pipeline', automation: '⚙️ תהליכים', logs: 'לוג פעולות' }[tab]}
+            {{ overview: 'סקירה', pipeline: '🤖 Pipeline', automation: '⚙️ תהליכים', db: '🗄️ מאגר נתונים', logs: 'לוג' }[tab]}
           </button>
         ))}
       </div>
@@ -158,9 +159,10 @@ export default function DashboardClient({ stats, userId }: { stats: Stats; userI
       )}
 
       {/* Pipeline Tab — 4 AI agents */}
-      {activeTab === 'pipeline' && (
-        <PipelineRunner />
-      )}
+      {activeTab === 'pipeline' && <PipelineRunner />}
+
+      {/* DB / Scraper Status */}
+      {activeTab === 'db' && <ScraperStatus />}
 
       {/* Automation Tab */}
       {activeTab === 'automation' && (
