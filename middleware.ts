@@ -33,8 +33,11 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname
   const isPublic = PUBLIC_PATHS.some(p => path.startsWith(p))
 
+  // Local/demo session — cookie שנקבע ב-client
+  const hasLocalSession = request.cookies.has('tax_local_session')
+
   // הפניה לדף login אם לא מחובר
-  if (!user && !isPublic) {
+  if (!user && !hasLocalSession && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('redirectTo', path)
@@ -42,9 +45,9 @@ export async function middleware(request: NextRequest) {
   }
 
   // הפניה מדף login אם כבר מחובר
-  if (user && path === '/login') {
+  if ((user || hasLocalSession) && path === '/login') {
     const url = request.nextUrl.clone()
-    url.pathname = '/'
+    url.pathname = hasLocalSession ? '/demo' : '/'
     return NextResponse.redirect(url)
   }
 
