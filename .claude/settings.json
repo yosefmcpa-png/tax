@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/user/tax && npx tsc --noEmit 2>&1 | head -20",
+            "timeout": 30,
+            "statusMessage": "בודק TypeScript..."
+          }
+        ]
+      }
+    ]
+  }
+}
