@@ -32,3 +32,7 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local SQLite runtime files (WAL mode)
+.local/*.db-shm
+.local/*.db-wal
