@@ -60,6 +60,7 @@ export default function TopBar() {
           { href: '/demo',     label: '⚡ Pipeline' },
           { href: '/history',    label: '📂 היסטוריה' },
           { href: '/calculator', label: '🧮 מחשבון' },
+          { href: '/deadlines',  label: '📅 מועדים' },
           { href: '/dashboard',  label: '📊 Dashboard' },
         ].map(n => (
           <Link key={n.href} href={n.href}
