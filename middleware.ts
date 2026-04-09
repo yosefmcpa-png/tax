@@ -9,7 +9,7 @@ const PUBLIC_PATHS = [
   '/login', '/auth/callback', '/api/auth',
   '/demo', '/api/automation/demo',
   '/api/agent/standalone', '/api/history',
-  '/history', '/dashboard',
+  '/history', '/dashboard', '/calculator',
 ]
 
 export async function middleware(request: NextRequest) {

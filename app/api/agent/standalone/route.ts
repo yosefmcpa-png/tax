@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { israeliTaxSearch, duckduckgoSearch, fetchAndParse } from '@/lib/tools/web-search'
 import { checkRateLimit, saveConversation, createCase } from '@/lib/db/sqlite'
+import { searchKnowledge } from '@/lib/tax/knowledge'
 
 /**
  * POST /api/agent/standalone
@@ -36,7 +37,11 @@ export async function POST(req: NextRequest) {
         const caseId = existingCaseId ?? createCase(query.substring(0, 80)).id
         send({ caseId })
 
-        // Step 1 — search
+        // Step 1 — local knowledge base (instant, no network)
+        send({ toolCall: '📚 בודק מאגר ידע מקומי...' })
+        const knowledgeHits = searchKnowledge(query)
+
+        // Step 2 — web search
         send({ toolCall: '🌐 מחפש ברשת...' })
         let results: Array<{ title: string; url: string; snippet: string }> = []
         try {
@@ -44,7 +49,7 @@ export async function POST(req: NextRequest) {
           if (results.length === 0) results = await duckduckgoSearch(query + ' מס ישראל')
         } catch { /* no network */ }
 
-        // Step 2 — fetch top result
+        // Step 3 — fetch top result
         let fullPageText = ''
         if (results[0]?.url) {
           send({ toolCall: `📄 קורא: ${results[0].title.substring(0, 50)}...` })
@@ -56,8 +61,8 @@ export async function POST(req: NextRequest) {
 
         send({ toolCall: '🧠 מנתח ומעבד...' })
 
-        // Step 3 — build answer
-        const answer = buildAnswer(query, results, fullPageText)
+        // Step 4 — build answer (knowledge base + web results)
+        const answer = buildAnswer(query, results, fullPageText, knowledgeHits)
 
         // Emit token-by-token for smooth UX
         const words = answer.split(' ')
@@ -106,27 +111,39 @@ function buildAnswer(
   query: string,
   results: Array<{ title: string; url: string; snippet: string }>,
   fullPage: string,
+  knowledgeHits: import('@/lib/tax/knowledge').KnowledgeEntry[] = [],
 ): string {
 
   const sections: string[] = []
-
-  // Intro
   sections.push(`## ${query}\n`)
 
-  if (results.length === 0 && !fullPage) {
-    sections.push('לא נמצאו תוצאות ברשת. ודא שיש חיבור לאינטרנט ונסה שוב.\n\n**טיפ:** תוכל לנסות את מצב ה-Pipeline בדף /demo לניתוח מעמיק יותר.')
+  // Local knowledge base — always first, most reliable
+  if (knowledgeHits.length > 0) {
+    const top = knowledgeHits[0]
+    sections.push(`### ${top.title}\n${top.content}\n\n*מקור: ${top.source}*\n`)
+    if (knowledgeHits.length > 1) {
+      sections.push('### נושאים קשורים\n')
+      knowledgeHits.slice(1, 3).forEach(h => {
+        sections.push(`**${h.title}**\n${h.content.split('\n')[0]}\n`)
+      })
+    }
+  }
+
+  // Nothing found anywhere
+  if (results.length === 0 && !fullPage && knowledgeHits.length === 0) {
+    sections.push('לא נמצא מידע ספציפי לשאלה זו.\n\n**המלצה:** נסח מחדש את השאלה עם מילות מפתח כמו: מס שבח, מס הכנסה, מע"מ, עצמאי, שומה.\n\nלניתוח מעמיק יותר: /demo → Pipeline מלא.')
     return sections.join('\n')
   }
 
   // From full page
   if (fullPage && fullPage.length > 200) {
-    const excerpt = fullPage.substring(0, 1200).trim()
-    sections.push(`### מהמקור הראשי\n${excerpt}...\n`)
+    const excerpt = fullPage.substring(0, 800).trim()
+    sections.push(`\n### מהמקור ברשת\n${excerpt}...\n`)
   }
 
   // From search snippets
   if (results.length > 0) {
-    sections.push('### מקורות מהרשת\n')
+    sections.push('\n### מקורות מהרשת\n')
     for (const r of results.slice(0, 4)) {
       sections.push(`**${r.title}**\n${r.snippet}\n`)
     }

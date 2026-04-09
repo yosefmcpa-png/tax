@@ -58,8 +58,9 @@ export default function TopBar() {
         {[
           { href: '/',         label: '💬 צ\'אט' },
           { href: '/demo',     label: '⚡ Pipeline' },
-          { href: '/history',  label: '📂 היסטוריה' },
-          { href: '/dashboard',label: '📊 Dashboard' },
+          { href: '/history',    label: '📂 היסטוריה' },
+          { href: '/calculator', label: '🧮 מחשבון' },
+          { href: '/dashboard',  label: '📊 Dashboard' },
         ].map(n => (
           <Link key={n.href} href={n.href}
             className="text-xs px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200
