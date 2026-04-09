@@ -70,6 +70,37 @@ function initSchema(db: Database.Database) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS scraped_legislation (
+      id          TEXT PRIMARY KEY,
+      title       TEXT NOT NULL,
+      type        TEXT,
+      status      TEXT,
+      summary     TEXT,
+      source_url  TEXT,
+      published_at TEXT,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS scraped_court_cases (
+      id            TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      court         TEXT,
+      decision_date TEXT,
+      summary       TEXT,
+      source_url    TEXT,
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS scraped_tax_rulings (
+      id           TEXT PRIMARY KEY,
+      title        TEXT NOT NULL,
+      category     TEXT,
+      date_issued  TEXT,
+      summary      TEXT,
+      source_url   TEXT,
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS scraper_logs (
       id         TEXT PRIMARY KEY,
       source     TEXT NOT NULL,

@@ -1,26 +1,35 @@
 import { NextResponse } from 'next/server'
-import { createServerSupabaseClient, createAdminSupabaseClient } from '@/lib/supabase/server'
+import { getDb } from '@/lib/db/sqlite'
 
 export async function GET() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json([], { status: 401 })
+  try {
+    const db = getDb()
 
-  const admin = createAdminSupabaseClient()
-  // Most recent log per scraper
-  const { data } = await admin
-    .from('scraper_logs')
-    .select('scraper, status, records, error_count, created_at')
-    .order('created_at', { ascending: false })
-    .limit(40)
+    const logs = db.prepare(`
+      SELECT source, status, records, error, created_at
+      FROM scraper_logs
+      ORDER BY created_at DESC
+      LIMIT 40
+    `).all() as Array<{ source: string; status: string; records: number; error: string | null; created_at: string }>
 
-  // Dedupe — keep latest per scraper
-  const seen = new Set<string>()
-  const latest = (data ?? []).filter((r: { scraper: string }) => {
-    if (seen.has(r.scraper)) return false
-    seen.add(r.scraper)
-    return true
-  })
+    // Keep latest per source
+    const seen = new Set<string>()
+    const latest = logs.filter(r => {
+      if (seen.has(r.source)) return false
+      seen.add(r.source)
+      return true
+    })
 
-  return NextResponse.json(latest)
+    // Add DB counts
+    const counts = {
+      legislation: (db.prepare('SELECT COUNT(*) as n FROM scraped_legislation').get() as { n: number }).n,
+      companies:   (db.prepare('SELECT COUNT(*) as n FROM scraped_companies').get() as { n: number }).n,
+      court_cases: (db.prepare('SELECT COUNT(*) as n FROM scraped_court_cases').get() as { n: number }).n,
+      tax_rulings: (db.prepare('SELECT COUNT(*) as n FROM scraped_tax_rulings').get() as { n: number }).n,
+    }
+
+    return NextResponse.json({ logs: latest, counts })
+  } catch (err) {
+    return NextResponse.json({ logs: [], counts: {}, error: (err as Error).message })
+  }
 }

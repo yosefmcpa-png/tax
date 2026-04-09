@@ -8,8 +8,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 const PUBLIC_PATHS = [
   '/login', '/auth/callback', '/api/auth',
   '/demo', '/api/automation/demo',
-  '/api/agent/standalone', '/api/history',
-  '/history', '/dashboard', '/calculator', '/search', '/deadlines', '/',
+  '/api/agent/standalone', '/api/history', '/api/scraper',
+  '/history', '/dashboard', '/calculator', '/search', '/deadlines', '/report', '/',
 ]
 
 export async function middleware(request: NextRequest) {

@@ -14,8 +14,17 @@ const TOOLS = [
   { href: '/demo',       icon: '⚡', title: 'Pipeline AI',      desc: '4 סוכנים: מחקר → ניתוח → סיכונים → דוח',    color: 'teal'   },
   { href: '/calculator', icon: '🧮', title: 'מחשבון מס 2024',  desc: 'מס הכנסה, ביטוח לאומי, מע"מ — חישוב מיידי', color: 'purple' },
   { href: '/deadlines',  icon: '📅', title: 'מועדים קריטיים', desc: 'לוח מועדי הגשה ותשלום לכל השנה',             color: 'amber'  },
+  { href: '/report',     icon: '📋', title: 'מחולל דוחות',    desc: 'הפק דוח מס מקצועי — הדפסה / PDF',            color: 'indigo' },
+  { href: '/search',     icon: '🔍', title: 'חיפוש מאגר',     desc: 'חוקים, פסיקה, חוזרי מס, חברות',             color: 'rose'   },
   { href: '/history',    icon: '📂', title: 'היסטוריה',        desc: 'כל החיפושים שמורים ב-SQLite מקומי',          color: 'slate'  },
 ]
+
+interface DbStats {
+  legislation: number
+  companies: number
+  court_cases: number
+  tax_rulings: number
+}
 
 export default function HomeClient() {
   const [isLocal, setIsLocal] = useState(false)
@@ -41,15 +50,33 @@ export default function HomeClient() {
 }
 
 function StandaloneHome() {
+  const [stats, setStats] = useState<DbStats | null>(null)
+
+  useEffect(() => {
+    fetch('/api/scraper/logs')
+      .then(r => r.json())
+      .then(d => { if (d.counts) setStats(d.counts) })
+      .catch(() => null)
+  }, [])
+
+  const COLORS: Record<string, string> = {
+    teal:   'border-teal-500/30 hover:border-teal-500/50 hover:bg-teal-500/5',
+    purple: 'border-purple-500/30 hover:border-purple-500/50 hover:bg-purple-500/5',
+    amber:  'border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-500/5',
+    indigo: 'border-indigo-500/30 hover:border-indigo-500/50 hover:bg-indigo-500/5',
+    rose:   'border-rose-500/30 hover:border-rose-500/50 hover:bg-rose-500/5',
+    slate:  'border-slate-600/40 hover:border-slate-500/60 hover:bg-slate-700/20',
+  }
+
   return (
     <div className="relative min-h-screen flex flex-col overflow-hidden">
       <WormholeCanvas />
       <div className="relative z-10 flex flex-col min-h-screen">
         <TopBar />
-        <main className="flex-1 flex flex-col items-center justify-center p-6" dir="rtl">
+        <main className="flex-1 flex flex-col items-center justify-start pt-10 px-6 pb-10" dir="rtl">
 
           {/* Hero */}
-          <div className="text-center mb-10">
+          <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 shadow-xl shadow-teal-500/20"
                  style={{ background: 'linear-gradient(135deg,#0d9488,#2dd4bf)' }}>
               <span className="text-3xl">⚖️</span>
@@ -67,29 +94,39 @@ function StandaloneHome() {
             </div>
           </div>
 
+          {/* DB Stats bar */}
+          {stats && (
+            <div className="w-full max-w-3xl mb-6 grid grid-cols-4 gap-2">
+              {[
+                { label: 'חקיקה', n: stats.legislation, color: 'text-teal-400' },
+                { label: 'חברות', n: stats.companies,   color: 'text-purple-400' },
+                { label: 'פסיקה', n: stats.court_cases, color: 'text-amber-400' },
+                { label: 'חוזרי מס', n: stats.tax_rulings, color: 'text-rose-400' },
+              ].map(s => (
+                <div key={s.label}
+                     className="rounded-xl border border-slate-700/40 bg-slate-900/40 backdrop-blur-sm px-4 py-3 text-center">
+                  <div className={`text-lg font-bold tabular-nums ${s.color}`}>{s.n.toLocaleString()}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Quick ask */}
           <div className="w-full max-w-xl mb-8">
             <QuickAsk />
           </div>
 
           {/* Tools grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full max-w-3xl">
-            {TOOLS.map(t => {
-              const colors: Record<string, string> = {
-                teal:   'border-teal-500/30 hover:border-teal-500/50 hover:bg-teal-500/5',
-                purple: 'border-purple-500/30 hover:border-purple-500/50 hover:bg-purple-500/5',
-                amber:  'border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-500/5',
-                slate:  'border-slate-600/40 hover:border-slate-500/60 hover:bg-slate-700/20',
-              }
-              return (
-                <Link key={t.href} href={t.href}
-                  className={`rounded-xl border p-4 transition-all text-right bg-slate-900/40 backdrop-blur-sm ${colors[t.color]}`}>
-                  <div className="text-2xl mb-2">{t.icon}</div>
-                  <div className="text-sm font-semibold text-slate-200">{t.title}</div>
-                  <div className="text-xs text-slate-500 mt-1 leading-relaxed">{t.desc}</div>
-                </Link>
-              )
-            })}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-3xl">
+            {TOOLS.map(t => (
+              <Link key={t.href} href={t.href}
+                className={`rounded-xl border p-4 transition-all text-right bg-slate-900/40 backdrop-blur-sm ${COLORS[t.color]}`}>
+                <div className="text-2xl mb-2">{t.icon}</div>
+                <div className="text-sm font-semibold text-slate-200">{t.title}</div>
+                <div className="text-xs text-slate-500 mt-1 leading-relaxed">{t.desc}</div>
+              </Link>
+            ))}
           </div>
 
         </main>

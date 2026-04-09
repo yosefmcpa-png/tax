@@ -56,11 +56,12 @@ export default function TopBar() {
       {/* Center: nav */}
       <nav className="hidden md:flex items-center gap-1">
         {[
-          { href: '/',         label: '💬 צ\'אט' },
-          { href: '/demo',     label: '⚡ Pipeline' },
-          { href: '/history',    label: '📂 היסטוריה' },
+          { href: '/',           label: '💬 צ\'אט' },
+          { href: '/demo',       label: '⚡ Pipeline' },
           { href: '/calculator', label: '🧮 מחשבון' },
           { href: '/deadlines',  label: '📅 מועדים' },
+          { href: '/report',     label: '📋 דוחות' },
+          { href: '/search',     label: '🔍 חיפוש' },
           { href: '/dashboard',  label: '📊 Dashboard' },
         ].map(n => (
           <Link key={n.href} href={n.href}

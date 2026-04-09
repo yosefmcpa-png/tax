@@ -1,70 +1,92 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerSupabaseClient, createAdminSupabaseClient } from '@/lib/supabase/server'
+import { getDb } from '@/lib/db/sqlite'
 
 // ============================================================
 // GET /api/search?q=QUERY&type=companies|court_cases|...&limit=20
+// Standalone — queries local SQLite (no Supabase)
 // ============================================================
 
 export async function GET(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const { searchParams } = req.nextUrl
   const q     = (searchParams.get('q') ?? '').trim()
-  const type  = searchParams.get('type') ?? 'companies'
+  const type  = searchParams.get('type') ?? 'all'
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '20'), 50)
 
   if (!q) return NextResponse.json({ results: [], total: 0 })
 
-  const admin = createAdminSupabaseClient()
+  const db = getDb()
+  const like = `%${q}%`
 
   try {
-    switch (type) {
-
-      case 'companies': {
-        const { data, count } = await admin
-          .from('scraped_companies')
-          .select('company_number, name, status, registered_at, address', { count: 'estimated' })
-          .or(`name.ilike.%${q}%,company_number.eq.${q}`)
-          .order('name')
-          .limit(limit)
-        return NextResponse.json({ results: data ?? [], total: count ?? 0 })
-      }
-
-      case 'court_cases': {
-        const { data, count } = await admin
-          .from('scraped_court_cases')
-          .select('case_number, title, court, decision_date, summary, outcome, source_url', { count: 'estimated' })
-          .or(`title.ilike.%${q}%,summary.ilike.%${q}%`)
-          .order('decision_date', { ascending: false, nullsFirst: false })
-          .limit(limit)
-        return NextResponse.json({ results: data ?? [], total: count ?? 0 })
-      }
-
-      case 'legislation': {
-        const { data, count } = await admin
-          .from('scraped_legislation')
-          .select('law_id, title, type, status, published_at, summary, source_url', { count: 'estimated' })
-          .or(`title.ilike.%${q}%,summary.ilike.%${q}%`)
-          .order('published_at', { ascending: false, nullsFirst: false })
-          .limit(limit)
-        return NextResponse.json({ results: data ?? [], total: count ?? 0 })
-      }
-
-      case 'tax_rulings': {
-        const { data, count } = await admin
-          .from('scraped_tax_rulings')
-          .select('ruling_number, title, summary, date_issued, category, source_url', { count: 'estimated' })
-          .or(`title.ilike.%${q}%,summary.ilike.%${q}%`)
-          .order('date_issued', { ascending: false, nullsFirst: false })
-          .limit(limit)
-        return NextResponse.json({ results: data ?? [], total: count ?? 0 })
-      }
-
-      default:
-        return NextResponse.json({ error: 'Unknown type' }, { status: 400 })
+    if (type === 'companies') {
+      const rows = db.prepare(`
+        SELECT id, name, status, type, registered
+        FROM scraped_companies
+        WHERE name LIKE ? OR id LIKE ?
+        ORDER BY name LIMIT ?
+      `).all(like, like, limit)
+      return NextResponse.json({ results: rows, total: rows.length, type: 'companies' })
     }
+
+    if (type === 'court_cases') {
+      const rows = db.prepare(`
+        SELECT id, title, court, decision_date, summary, source_url
+        FROM scraped_court_cases
+        WHERE title LIKE ? OR summary LIKE ?
+        ORDER BY decision_date DESC LIMIT ?
+      `).all(like, like, limit)
+      return NextResponse.json({ results: rows, total: rows.length, type: 'court_cases' })
+    }
+
+    if (type === 'legislation') {
+      const rows = db.prepare(`
+        SELECT id, title, type, status, summary, source_url, published_at
+        FROM scraped_legislation
+        WHERE title LIKE ? OR summary LIKE ?
+        ORDER BY published_at DESC LIMIT ?
+      `).all(like, like, limit)
+      return NextResponse.json({ results: rows, total: rows.length, type: 'legislation' })
+    }
+
+    if (type === 'tax_rulings') {
+      const rows = db.prepare(`
+        SELECT id, title, category, date_issued, summary
+        FROM scraped_tax_rulings
+        WHERE title LIKE ? OR summary LIKE ? OR category LIKE ?
+        ORDER BY date_issued DESC LIMIT ?
+      `).all(like, like, like, limit)
+      return NextResponse.json({ results: rows, total: rows.length, type: 'tax_rulings' })
+    }
+
+    // type === 'all' — search across all tables
+    const perTable = Math.ceil(limit / 4)
+
+    const companies = db.prepare(`
+      SELECT 'company' as kind, id, name as title, status, NULL as summary, NULL as date
+      FROM scraped_companies WHERE name LIKE ? LIMIT ?
+    `).all(like, perTable)
+
+    const cases = db.prepare(`
+      SELECT 'court_case' as kind, id, title, court as status, summary,
+             decision_date as date
+      FROM scraped_court_cases WHERE title LIKE ? OR summary LIKE ? LIMIT ?
+    `).all(like, like, perTable)
+
+    const legislation = db.prepare(`
+      SELECT 'legislation' as kind, id, title, status, summary,
+             published_at as date
+      FROM scraped_legislation WHERE title LIKE ? OR summary LIKE ? LIMIT ?
+    `).all(like, like, perTable)
+
+    const rulings = db.prepare(`
+      SELECT 'tax_ruling' as kind, id, title, category as status, summary,
+             date_issued as date
+      FROM scraped_tax_rulings WHERE title LIKE ? OR summary LIKE ? LIMIT ?
+    `).all(like, like, perTable)
+
+    const results = [...companies, ...cases, ...legislation, ...rulings]
+    return NextResponse.json({ results, total: results.length, type: 'all' })
+
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
