@@ -12,7 +12,44 @@ const PUBLIC_PATHS = [
   '/history', '/dashboard', '/calculator', '/search', '/deadlines', '/report', '/',
 ]
 
+function isSupabaseConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+  return (
+    url.startsWith('https://') &&
+    !url.includes('placeholder') &&
+    url.includes('.supabase.co') &&
+    key.length > 20 &&
+    !key.includes('placeholder')
+  )
+}
+
 export async function middleware(request: NextRequest) {
+  const path = request.nextUrl.pathname
+  const isPublic = PUBLIC_PATHS.some(p => path === p || (p !== '/' && path.startsWith(p)))
+
+  // Local/demo session — cookie שנקבע ב-client
+  const hasLocalSession = request.cookies.has('tax_local_session')
+
+  // אם Supabase לא מוגדר — דלג על כל קריאות ה-auth
+  if (!isSupabaseConfigured()) {
+    // הפניה לדף login אם אין session כלל ולא נתיב ציבורי
+    if (!hasLocalSession && !isPublic) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/login'
+      url.searchParams.set('redirectTo', path)
+      return NextResponse.redirect(url)
+    }
+    // הפניה מ-login אם כבר יש session
+    if (hasLocalSession && path === '/login') {
+      const url = request.nextUrl.clone()
+      url.pathname = '/demo'
+      return NextResponse.redirect(url)
+    }
+    return NextResponse.next({ request })
+  }
+
+  // ── Supabase מוגדר — בדיקת session רגילה ──────────────────
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -32,16 +69,8 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // רענון session — חובה
   const { data: { user } } = await supabase.auth.getUser()
 
-  const path = request.nextUrl.pathname
-  const isPublic = PUBLIC_PATHS.some(p => path.startsWith(p))
-
-  // Local/demo session — cookie שנקבע ב-client
-  const hasLocalSession = request.cookies.has('tax_local_session')
-
-  // הפניה לדף login אם לא מחובר
   if (!user && !hasLocalSession && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
@@ -49,7 +78,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // הפניה מדף login אם כבר מחובר
   if ((user || hasLocalSession) && path === '/login') {
     const url = request.nextUrl.clone()
     url.pathname = hasLocalSession ? '/demo' : '/'
