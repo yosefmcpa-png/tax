@@ -7,6 +7,7 @@ import MessageBubble from './MessageBubble'
 import InputBar from './InputBar'
 import AnalysisModal from '@/components/modals/AnalysisModal'
 import { createClient } from '@/lib/supabase/client'
+import { getLocalSession } from '@/lib/auth/local-session'
 
 export default function ChatInterface() {
   const {
@@ -31,9 +32,18 @@ export default function ChatInterface() {
   ) => {
     if (isLoading) return
 
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    // Detect local session vs Supabase session
+    const localSession = getLocalSession()
+    let   authHeader   = ''
+    let   endpoint     = '/api/agent/standalone'
+
+    if (!localSession) {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      authHeader = `Bearer ${session.access_token}`
+      endpoint   = '/api/agent/stream'
+    }
 
     abortRef.current?.abort()
     abortRef.current = new AbortController()
@@ -63,12 +73,12 @@ export default function ChatInterface() {
     }
 
     try {
-      const res = await fetch('/api/agent/stream', {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (authHeader) headers['Authorization'] = authHeader
+
+      const res = await fetch(endpoint, {
         method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
-        },
+        headers,
         body:   JSON.stringify(body),
         signal: abortRef.current.signal,
       })

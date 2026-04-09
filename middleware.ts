@@ -5,7 +5,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 // Middleware — הגנת נתיבים + רענון session
 // ============================================================
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/api/auth', '/demo', '/api/automation/demo']
+const PUBLIC_PATHS = [
+  '/login', '/auth/callback', '/api/auth',
+  '/demo', '/api/automation/demo',
+  '/api/agent/standalone', '/api/history',
+  '/history',
+]
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })

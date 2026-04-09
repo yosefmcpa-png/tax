@@ -1,11 +1,6 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import HomeClient from '@/components/home/HomeClient'
 
-export default async function HomePage() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
+// supports both Supabase session and local cookie session (set by /login quick-login)
+export default function HomePage() {
   return <HomeClient />
 }
